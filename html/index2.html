@@ -1,0 +1,594 @@
+<html>
+    <head>
+        <link type="text/css" rel="stylesheet" href="/html/materialize/css/materialize.min.css"  media="screen,projection"/>
+        <link type="text/css" rel="stylesheet" href="/html/css/icons.css">
+        <style>
+         /* body {
+            display: flex;
+            min-height: 100vh;
+            flex-direction: column;
+            } */
+
+         /* main {
+            flex: 1 0 auto;
+            } */
+
+         .panel {
+             border: 1px solid #eee;
+             height: 300px;
+             padding: 4px;
+         }
+
+        </style>
+        <script type="text/javascript" src="/html/js/petite-vue.iife.js"></script>
+        <script type="module">
+         function App() {
+             console.log("Main App Component");
+             return {
+                 pc_time: new Date(),
+                 updateTime() {
+                     this.pc_time = new Date().toISOString();
+                 },
+                 updateDevice() {
+                     if(this.editingDevice) {
+                         this.fetchDeviceDetails(this.device);
+                     }
+                 },
+                 setupRouting() {
+                     console.log("main app mounted");
+                     setInterval(() => { this.updateTime(); this.updateDevice();}, 1000);
+
+                     console.log("routing setup");
+                     const onHashChange = () => {
+                         var visibility = window.location.hash.replace(/#\/?/, '');
+                         if(visibility === '') {
+                             this.editingDevice = false;
+                         }
+
+                         if(visibility.match(/edit/)) {
+                             let chunks = visibility.match(/edit\/(telescope|camera|filterwheel|focuser)\/([0-9]+)/i);
+                             if(chunks.length > 2) {
+                                 this.devicesSelected = true;
+                                 this.setupSelected = false;
+                                 this.logsSelected = false;
+                                 let deviceToLoad = {};
+                                 deviceToLoad.DeviceType = chunks[1];
+                                 deviceToLoad.DeviceNumber = chunks[2];
+                                 this.device = deviceToLoad;
+                                 this.editingDevice = true;
+                             }
+                         }
+
+                         if(visibility.match(/devices/)) {
+                             this.devicesSelected = true;
+                             this.setupSelected = false;
+                             this.logsSelected = false;
+                             this.editingDevice = false;
+                         }
+
+                         if(visibility.match(/logs/)) {
+                             this.devicesSelected = false;
+                             this.setupSelected = false;
+                             this.logsSelected = true;
+                             this.editingDevice = false;
+                         }
+
+                     }
+                     window.addEventListener('hashchange', onHashChange)
+                     onHashChange()
+                 },
+                 Devices: [],
+                 devicesSelected: true,
+                 setupSelected: false,
+                 logsSelected: false,
+                 device: null,
+                 editingDevice: false,
+                 fetchData() {
+                     fetch("/management/v1/configureddevices")
+                         .then((res) => res.json())
+                         .then((data) => {
+                             this.Devices = data.Value;
+                         });
+                 },
+                 editDevice(device) {
+                     this.editingDevice = true;
+                     this.device = device;
+                     this.device.Details = {};
+                     console.log("editing device: ", device);
+                 },
+                 mounted() {
+                     console.log("App mounted");
+                 },
+                 fetchDeviceDetails(device) {
+                     console.log("fetching device details, busy? ", device.busy);
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/details")
+                         .then((_res) => {
+                             return _res.json()
+                         }).catch((e) => { console.log("_res e: ", e) })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 device.ErrorNumber = 0;
+                                 device.Details = _data;
+                                 device.Connected = _data.connected || _data.Connected;
+                                 // device.Tracking = _data.tracking || _data.Tracking;
+                                 if(!device.Latitude)
+                                     device.Latitude = _data["SiteLatitude"];
+                                 if(!device.Longitude)
+                                     device.Longitude = _data["SiteLongitude"];
+                                 if(!device.Elevation)
+                                     device.Elevation = _data["SiteElevation"];
+                                 if(!device.Position) {
+                                     device.Position = _data["Position"];
+                                 }
+                                 if(device.DeviceType.toLowerCase() == 'focuser' && device.Details.Moving) {
+                                     device.busy = true;
+                                 } else {
+                                     device.busy = false;
+                                 }
+                             } else {
+                                 device.ErrorNumber = _data.ErrorNumber;
+                                 device.ErrorMessage = _data.ErrorMessage;
+                             }
+                         }).catch((e) => {console.log("_data e: ", e)});
+                 },
+                 connect(device) {
+                     device.busy = true;
+                     let connected_value = "True";
+                     if(device.Connected == true)
+                         connected_value = "False"
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/connected", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Connected=${connected_value}`
+                     })
+                             .then((_res) => _res.json())
+                             .then((_data) => {
+                                 device.busy = false;
+                                 if(_data.ErrorNumber === 0) {
+                                     console.log("response: ", _data);
+                                     this.fetchDeviceDetails(device);
+                                 } else {
+                                     device.ErrorNumber = _data.ErrorNumber;
+                                     device.ErrorMessage = _data.ErrorMessage;
+                                 }
+                             });
+                 },
+                 reconnectDevice(device) {
+                     device.Connected = true;
+                     device.ErrorNumber = null;
+                     device.ErrorMessage = null;
+                     this.connect(device);
+                 },
+                 setTracking(device) {
+                     device.busy = true;
+                     let tracking_value = "True";
+                     if(device.Details.Tracking == true)
+                         tracking_value = "False"
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/tracking", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Tracking=${tracking_value}`
+                     })
+                             .then((_res) => _res.json())
+                             .then((_data) => {
+                                 device.busy = false;
+                                 if(_data.ErrorNumber === 0) {
+                                     console.log("response: ", _data);
+                                     this.fetchDeviceDetails(device);
+                                 } else {
+                                     device.ErrorNumber = _data.ErrorNumber;
+                                     device.ErrorMessage = _data.ErrorMessage;
+                                 }
+                             });
+                 },
+                 abortSlew(device) {
+                     device.busy = true;
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/abortslew", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                     })
+                             .then((_res) => _res.json())
+                             .then((_data) => {
+                                 device.busy = false;
+                                 if(_data.ErrorNumber === 0) {
+                                     console.log("response: ", _data);
+                                     this.fetchDeviceDetails(device);
+                                 } else {
+                                     device.ErrorNumber = _data.ErrorNumber;
+                                     device.ErrorMessage = _data.ErrorMessage;
+                                 }
+                             });
+                 },
+                 setMountTimeFromPC(device) {
+                     device.busy = true;
+                     let date_now = new Date();
+                     var date_iso_str = date_now.toISOString();
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/utcdate", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `UTCDate=${encodeURIComponent(date_now.toISOString())}`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem setting date!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             device.busy = false;
+                             device.busy = false;
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 device.ErrorNumber = _data.ErrorNumber;
+                                 device.ErrorMessage = _data.ErrorMessage;
+                             }
+                         });
+                 },
+                 setLatitude(device) {
+                     device.busy = true;
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/sitelatitude", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `SiteLatitude=${encodeURIComponent(device.Latitude)}`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem setting latitude!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             device.busy = false;
+                             if(_data.ErrorNumber === 0) {
+                                 console.log("response: ", _data);
+                                 device.Latitude = null;
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 setLongitude(device) {
+                     device.busy = true;
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/sitelongitude", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `SiteLongitude=${encodeURIComponent(device.Longitude)}`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem setting longitude!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 device.Longitude = null;
+                                 this.fetchDeviceDetails(device);
+                                 device.busy = false;
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                                 device.busy = false;
+                             }
+                         });
+                 },
+                 setElevation(device) {
+                     device.busy = true;
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/siteelevation", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `SiteElevation=${encodeURIComponent(device.Elevation)}`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem setting elevation!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 device.Elevation = null;
+                                 device.busy = false;
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 device.busy = false;
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 moveNorth(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=1&Rate=4`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving north!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 stopMoveNorth(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=1&Rate=0`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving north!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 moveSouth(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=1&Rate=-4`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving south!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 stopMoveSouth(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=1&Rate=0`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving south!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 moveEast(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=0&Rate=4`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving east!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 stopMoveEast(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=0&Rate=0`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving east!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 moveWest(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=0&Rate=-4`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving west!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 stopMoveWest(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/moveaxis", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Axis=0&Rate=0`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem moving west!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 homeTelescope(device) {
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/findhome", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         }
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem homing scope!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                             }
+                         });
+                 },
+                 setFocuserPosition(device) {
+                     device.busy = true;
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/move", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         },
+                         body: `Position=${encodeURIComponent(device.Position)}`
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem setting focuser position!");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 // device.Position = null;
+                                 device.busy = true;
+                                 console.log("device should be busy...");
+                                 this.fetchDeviceDetails(device);
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                                 device.busy = false;
+                             }
+                         });
+                 },
+                 haltFocuser(device) {
+                     device.busy = true;
+                     fetch("/api/v1/" + device.DeviceType.toLowerCase() + "/" + device.DeviceNumber + "/halt", {
+                         method: 'PUT',
+                         headers: {
+                             'Content-Type': 'application/json'
+                         }
+                     })
+                         .then((_res) => _res.json())
+                         .catch((e) => {
+                             alert("problem halting focuser");
+                             device.busy = false;
+                         })
+                         .then((_data) => {
+                             if(_data.ErrorNumber === 0) {
+                                 // device.Position = null;
+                                 this.fetchDeviceDetails(device);
+                                 device.busy = true;
+                             } else {
+                                 alert("Problem: " + _data.ErrorMessage);
+                                 this.fetchDeviceDetails(device);
+                                 device.busy = false;
+                             }
+                         });
+                 },
+
+             }
+         };
+
+         PetiteVue.createApp({App}).mount();
+        </script>
+    </head>
+    <body v-scope="App()" @vue:mounted="setupRouting">
+        <main>
+            <div class="container">
+                Container
+                <div class="row">
+                    <div class="col s12 m6 l4">
+                        <div class="z-depth-2 grey panel">
+                            panel
+                        </div>
+                    </div>
+                    <div class="col s12 m6 l4">
+                        <div class="z-depth-2 grey panel">
+                            panel
+                        </div>
+                    </div>
+                    <div class="col s12 m6 l4">
+                        <div class="z-depth-2 grey panel">
+                            panel
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+        <script type="text/javascript" src="/html/materialize/js/materialize.min.js"></script>
+    </body>
+</html>
